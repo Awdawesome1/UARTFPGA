@@ -56,6 +56,7 @@ architecture rtl of uart_8_to_9_bridge is
     signal rx_data          : std_logic_vector(7 downto 0);
     signal rx_data_valid    : std_logic;
     signal rx_busy          : std_logic;
+    signal rx_first_bit_received : std_logic;
     
     -- Synchronizers for RX input
     signal uart_rx_sync1    : std_logic;
@@ -85,7 +86,7 @@ architecture rtl of uart_8_to_9_bridge is
     signal tx_busy          : std_logic;
     signal tx_bit_out       : std_logic;
     signal tx_frame_cnt     : integer range 0 to FIFO_DEPTH;
-    signal tx_first_byte_received : std_logic;
+    signal tx_can_start     : std_logic;
     
 begin
 
@@ -94,6 +95,7 @@ begin
     -- =========================================================================
     -- Receives 8-bit frames at configurable baud rate with 1:1 clock division
     -- Detects falling edge on RX line and samples bits at 1/2 baud offset
+    -- Idle until first start bit, then stays active
     
     process(clk) is
         variable temp_data : std_logic_vector(7 downto 0);
@@ -108,6 +110,7 @@ begin
                 rx_data         <= (others => '0');
                 rx_data_valid   <= '0';
                 rx_busy         <= '0';
+                rx_first_bit_received <= '0';
                 temp_data       := (others => '0');
             else
                 -- Synchronize RX input (2 FF chain for metastability)
@@ -125,6 +128,7 @@ begin
                         rx_baud_cnt <= RX_CLOCK_FREQ / (2 * RX_BAUD_RATE); -- 1/2 baud offset
                         rx_bit_cnt  <= 0;
                         temp_data   := (others => '0');
+                        rx_first_bit_received <= '1';  -- Mark that we've received first bit
                     end if;
                 else
                     -- We are receiving a frame
@@ -188,7 +192,10 @@ begin
     -- =========================================================================
     -- Transmits frames from FIFO with injected 9th bit
     -- 9th bit = 1 for first frame, 0 for all subsequent frames
-    -- Only starts transmitting after first byte is received from RX
+    -- Only starts transmitting after first full RX byte is received
+    
+    -- TX can start after the first complete byte has been received
+    tx_can_start <= '1' when rx_first_bit_received = '1' and rx_bit_cnt = 0 and rx_busy = '0' else '0';
     
     process(clk) is
     begin
@@ -201,19 +208,13 @@ begin
                 tx_bit_out      <= '1';
                 tx_frame_cnt    <= 0;
                 fifo_rd_en      <= '0';
-                tx_first_byte_received <= '0';
             else
-                -- Track when first byte is received from RX
-                if rx_data_valid = '1' then
-                    tx_first_byte_received <= '1';
-                end if;
-                
                 fifo_rd_en <= '0';
                 
                 if tx_busy = '0' then
                     -- Not currently transmitting
-                    if tx_first_byte_received = '1' and fifo_empty = '0' then
-                        -- Data available in FIFO and first byte has been received - start transmission
+                    if tx_can_start = '1' and fifo_empty = '0' then
+                        -- First byte received and data available in FIFO - start transmission
                         tx_busy     <= '1';
                         tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
                         tx_bit_cnt  <= 0;
