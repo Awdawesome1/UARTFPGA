@@ -188,80 +188,74 @@ begin
     -- =========================================================================
     -- Transmits frames from FIFO with injected 9th bit
     -- 9th bit = 1 for first frame, 0 for all subsequent frames
-    -- Only starts transmitting after first byte is read from FIFO
+    -- Only starts transmitting after first byte is received from RX
     
     process(clk) is
     begin
         if rising_edge(clk) then
             if rst = '1' then
-                tx_baud_cnt            <= 0;
-                tx_bit_cnt             <= 0;
-                tx_data                <= (others => '0');
-                tx_busy                <= '0';
-                tx_bit_out             <= '1';
-                tx_frame_cnt           <= 0;
-                fifo_rd_en             <= '0';
+                tx_baud_cnt     <= 0;
+                tx_bit_cnt      <= 0;
+                tx_data         <= (others => '0');
+                tx_busy         <= '0';
+                tx_bit_out      <= '1';
+                tx_frame_cnt    <= 0;
+                fifo_rd_en      <= '0';
                 tx_first_byte_received <= '0';
             else
+                -- Track when first byte is received from RX
+                if rx_data_valid = '1' then
+                    tx_first_byte_received <= '1';
+                end if;
+                
                 fifo_rd_en <= '0';
                 
                 if tx_busy = '0' then
                     -- Not currently transmitting
-                    if tx_first_byte_received = '0' and fifo_empty = '0' then
-                        -- First byte - just read and wait
-                        fifo_rd_en             <= '1';
-                        tx_data                <= fifo_dout;
-                        tx_first_byte_received <= '1';
-                        tx_frame_cnt           <= 1;
-                    elsif tx_first_byte_received = '1' and fifo_empty = '0' then
-                        -- Subsequent bytes - start transmission
-                        tx_busy                <= '1';
-                        tx_baud_cnt            <= TX_CLOCK_FREQ / (2 * TX_BAUD_RATE); -- 1/2 baud offset
-                        tx_bit_cnt             <= 0;
-                        tx_bit_out             <= '0';  -- Start bit
-                        fifo_rd_en             <= '1';
-                        tx_data                <= fifo_dout;
-                        tx_frame_cnt           <= tx_frame_cnt + 1;
+                    if tx_first_byte_received = '1' and fifo_empty = '0' then
+                        -- Data available in FIFO and first byte has been received - start transmission
+                        tx_busy     <= '1';
+                        tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
+                        tx_bit_cnt  <= 0;
+                        tx_bit_out  <= '0';  -- Start bit
+                        fifo_rd_en  <= '1';
+                        tx_data     <= fifo_dout;  -- Capture data immediately
+                        tx_frame_cnt <= tx_frame_cnt + 1;
                     else
                         tx_bit_out <= '1';  -- Keep idle high
                     end if;
                 else
-                    -- Currently transmitting
+                    -- Currently transmitting - count down baud timer
                     if tx_baud_cnt = 0 then
                         -- Time to transition to next bit
+                        tx_bit_cnt <= tx_bit_cnt + 1;
+                        
+                        -- Set next bit value and reload baud counter
                         case tx_bit_cnt is
                             when 0 =>
                                 -- Just sent start bit, now send data bit 0
                                 tx_bit_out  <= tx_data(0);
-                                tx_bit_cnt  <= 1;
                                 tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
                             when 1 =>
                                 tx_bit_out  <= tx_data(1);
-                                tx_bit_cnt  <= 2;
                                 tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
                             when 2 =>
                                 tx_bit_out  <= tx_data(2);
-                                tx_bit_cnt  <= 3;
                                 tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
                             when 3 =>
                                 tx_bit_out  <= tx_data(3);
-                                tx_bit_cnt  <= 4;
                                 tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
                             when 4 =>
                                 tx_bit_out  <= tx_data(4);
-                                tx_bit_cnt  <= 5;
                                 tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
                             when 5 =>
                                 tx_bit_out  <= tx_data(5);
-                                tx_bit_cnt  <= 6;
                                 tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
                             when 6 =>
                                 tx_bit_out  <= tx_data(6);
-                                tx_bit_cnt  <= 7;
                                 tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
                             when 7 =>
                                 tx_bit_out  <= tx_data(7);
-                                tx_bit_cnt  <= 8;
                                 tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
                             when 8 =>
                                 -- 9th bit injection
@@ -270,12 +264,10 @@ begin
                                 else
                                     tx_bit_out <= '0';
                                 end if;
-                                tx_bit_cnt  <= 9;
                                 tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
                             when 9 =>
                                 -- Stop bit
                                 tx_bit_out  <= '1';
-                                tx_bit_cnt  <= 10;
                                 tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
                             when 10 =>
                                 -- Frame complete
@@ -286,8 +278,7 @@ begin
                                 -- Check if FIFO is now empty
                                 if fifo_empty = '1' then
                                     -- Reset for next transmission session
-                                    tx_frame_cnt           <= 0;
-                                    tx_first_byte_received <= '0';
+                                    tx_frame_cnt <= 0;
                                 end if;
                             when others =>
                                 null;
