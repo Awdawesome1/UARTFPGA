@@ -82,10 +82,8 @@ architecture rtl of uart_8_to_9_bridge is
     signal tx_baud_cnt      : integer range 0 to TX_CLOCK_FREQ / TX_BAUD_RATE;
     signal tx_bit_cnt       : integer range 0 to 11;  -- 0=start, 1-8=data, 9=9th bit, 10=stop
     signal tx_data          : std_logic_vector(7 downto 0);
-    signal tx_data_valid    : std_logic;
     signal tx_busy          : std_logic;
     signal tx_bit_out       : std_logic;
-    signal tx_is_first      : std_logic;
     signal tx_frame_cnt     : integer range 0 to FIFO_DEPTH;
     
 begin
@@ -197,10 +195,8 @@ begin
                 tx_baud_cnt     <= 0;
                 tx_bit_cnt      <= 0;
                 tx_data         <= (others => '0');
-                tx_data_valid   <= '0';
                 tx_busy         <= '0';
                 tx_bit_out      <= '1';
-                tx_is_first     <= '1';
                 tx_frame_cnt    <= 0;
                 fifo_rd_en      <= '0';
             else
@@ -213,67 +209,76 @@ begin
                         tx_busy     <= '1';
                         tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
                         tx_bit_cnt  <= 0;
+                        tx_bit_out  <= '0';  -- Start bit
                         fifo_rd_en  <= '1';
+                        tx_data     <= fifo_dout;  -- Capture data immediately
                         tx_frame_cnt <= tx_frame_cnt + 1;
                     else
                         tx_bit_out <= '1';  -- Keep idle high
                     end if;
                 else
-                    -- Currently transmitting
+                    -- Currently transmitting - count down baud timer
                     if tx_baud_cnt = 0 then
-                        -- Time to output next bit
+                        -- Time to transition to next bit
+                        tx_bit_cnt <= tx_bit_cnt + 1;
+                        
+                        -- Set next bit value and reload baud counter
                         case tx_bit_cnt is
                             when 0 =>
-                                -- Start bit (always 0)
-                                tx_bit_out  <= '0';
-                                tx_bit_cnt  <= 1;
-                            when 1 to 8 =>
-                                -- Data bits (8 bits from FIFO)
-                                tx_bit_out  <= tx_data(tx_bit_cnt - 1);
-                                tx_bit_cnt  <= tx_bit_cnt + 1;
-                            when 9 =>
+                                -- Just sent start bit, now send data bit 0
+                                tx_bit_out  <= tx_data(0);
+                                tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
+                            when 1 =>
+                                tx_bit_out  <= tx_data(1);
+                                tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
+                            when 2 =>
+                                tx_bit_out  <= tx_data(2);
+                                tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
+                            when 3 =>
+                                tx_bit_out  <= tx_data(3);
+                                tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
+                            when 4 =>
+                                tx_bit_out  <= tx_data(4);
+                                tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
+                            when 5 =>
+                                tx_bit_out  <= tx_data(5);
+                                tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
+                            when 6 =>
+                                tx_bit_out  <= tx_data(6);
+                                tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
+                            when 7 =>
+                                tx_bit_out  <= tx_data(7);
+                                tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
+                            when 8 =>
                                 -- 9th bit injection
-                                -- 9th bit = 1 for first frame (tx_frame_cnt=1), 0 for others
                                 if tx_frame_cnt = 1 then
                                     tx_bit_out <= '1';
                                 else
                                     tx_bit_out <= '0';
                                 end if;
-                                tx_bit_cnt  <= 10;
-                            when 10 =>
-                                -- Stop bit (always 1)
+                                tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
+                            when 9 =>
+                                -- Stop bit
                                 tx_bit_out  <= '1';
-                                tx_bit_cnt  <= 11;
-                            when 11 =>
+                                tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
+                            when 10 =>
                                 -- Frame complete
                                 tx_busy     <= '0';
                                 tx_bit_cnt  <= 0;
+                                tx_bit_out  <= '1';  -- Return to idle
                                 
-                                -- Check if this was the last frame in FIFO
+                                -- Check if FIFO is now empty
                                 if fifo_empty = '1' then
                                     -- Reset for next transmission session
                                     tx_frame_cnt <= 0;
-                                    tx_is_first  <= '1';
                                 end if;
                             when others =>
                                 null;
                         end case;
-                        
-                        -- Reload baud counter
-                        if tx_bit_cnt < 11 then
-                            tx_baud_cnt <= TX_CLOCK_FREQ / TX_BAUD_RATE - 1;
-                        else
-                            tx_baud_cnt <= 0;
-                        end if;
                     else
-                        -- Count down to next bit transmission
+                        -- Count down baud timer
                         tx_baud_cnt <= tx_baud_cnt - 1;
                     end if;
-                end if;
-                
-                -- Capture data from FIFO when read is strobed
-                if fifo_rd_en = '1' then
-                    tx_data <= fifo_dout;
                 end if;
             end if;
         end if;
